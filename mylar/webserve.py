@@ -5911,7 +5911,8 @@ class WebInterface(object):
                 if st['IssueID']:
                     ctrlVal = {'IssueID': st['IssueID']}
                     myDB.upsert("issues", newVal, ctrlVal)
-        mylar.SEARCH_QUEUE.put((passinfo))
+        for passinfo in add_to_search_queue:
+            mylar.SEARCH_QUEUE.put((passinfo))
 
     ReadGetWanted.exposed = True
 
