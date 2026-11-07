@@ -1683,7 +1683,7 @@ def searchforissue(issueid=None, new=False, rsschecker=None, manual=False):
                         cnt = 0
                         for iss in issues_2:
                             checkit = searchforissue_checker(
-                                iss['IssueID'],
+                                iss['IssueArcID'],
                                 iss['ReleaseDate'],
                                 iss['IssueDate'],
                                 iss['DigitalDate'],
@@ -1693,11 +1693,11 @@ def searchforissue(issueid=None, new=False, rsschecker=None, manual=False):
                                 }
                             )
                             if checkit['status'] is True:
-                                if not any(r['IssueID'] == iss['IssueID'] for r in results):
+                                if not any(r['IssueID'] == iss['IssueArcID'] for r in results):
                                     results.append(
                                         {
                                             'ComicID': iss['ComicID'],
-                                            'IssueID': iss['IssueID'],
+                                            'IssueID': iss['IssueArcID'],
                                             'Issue_Number': iss['IssueNumber'],
                                             'IssueDate': iss['IssueDate'],
                                             'StoreDate': iss['ReleaseDate'],
