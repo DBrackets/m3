@@ -151,7 +151,7 @@ def getVersion(ptv):
         logger.info('cur_commit_hash: %s' % cur_commit_hash)
         logger.info('cur_branch: %s' % cur_branch)
 
-        if not re.match('^[a-z0-9]+$', cur_commit_hash) and current_version_name is None:
+        if current_version_name is None and (cur_commit_hash is None or not re.match('^[a-z0-9]+$', cur_commit_hash)):
             logger.error('Output does not look like a hash, not using it')
             cur_commit_hash = None
 
