@@ -5358,6 +5358,56 @@ class WebInterface(object):
         raise cherrypy.HTTPRedirect("detailStoryArc?StoryArcID=%s&StoryArcName=%s" % (storyarcid, storyarc))
     importReadlist.exposed = True
 
+    def _findIssueInLibrary(self, comicname, dynamic_name, issuenumber):
+        # Looks for a file matching this comic/issue somewhere under the general comics library root -
+        # specifically, in an immediate subfolder whose (sanitized) name matches the series. This covers
+        # the common case of a series folder that already exists on disk but was never added to Mylar's
+        # watchlist (so there's no comics/issues row for ArcWatchlist's normal matching to find).
+        #
+        # Used as a fallback for Story Arc issues - including CBL-routed ones - that aren't on the
+        # watchlist and weren't already sitting in the arc's own destination folder, before falling back
+        # to a provider search/download. Intentionally shallow (one matched folder, not a full recursive
+        # library walk) so it stays fast when checked once per not-yet-watched arc issue.
+        libroot = mylar.CONFIG.DESTINATION_DIR
+        if not libroot or not os.path.isdir(libroot):
+            return None
+
+        target_dyn = re.sub(r'[\|\s]', '', dynamic_name.lower()).strip()
+
+        try:
+            subdirs = [d for d in os.listdir(libroot) if os.path.isdir(os.path.join(libroot, d))]
+        except OSError as e:
+            logger.fdebug('Unable to list library directory %s while checking for an existing copy: %s' % (libroot, e))
+            return None
+
+        for sub in subdirs:
+            st_d = filechecker.FileChecker(watchcomic=sub)
+            st_dyninfo = st_d.dynamic_replace(sub)
+            folder_dyn = re.sub(r'[\|\s]', '', st_dyninfo['mod_seriesname'].lower()).strip()
+            if folder_dyn != target_dyn:
+                continue
+
+            fulldir = os.path.join(libroot, sub)
+            try:
+                fchk = filechecker.FileChecker(dir=fulldir, watchcomic=comicname, sarc='true', justparse=True)
+                filechk = fchk.listFiles()
+            except Exception as e:
+                logger.fdebug('Error scanning %s while checking for an existing copy: %s' % (fulldir, e))
+                continue
+
+            if not filechk or filechk.get('comiccount', 0) == 0:
+                continue
+
+            wanted_int = helpers.issue_number_parser(issuenumber).asInt
+            for fc in filechk['comiclist']:
+                temploc = fc.get('issue_number')
+                if not temploc:
+                    continue
+                temploc = temploc.replace('_', ' ')
+                if helpers.issue_number_parser(temploc).asInt == wanted_int:
+                    return {'comiclocation': fulldir, 'comicfilename': fc['comicfilename']}
+        return None
+
     def ArcWatchlist(self,StoryArcID=None):
         myDB = db.DBConnection()
         if StoryArcID:
@@ -5575,6 +5625,31 @@ class WebInterface(object):
                          "ComicName":      arc['ComicName'],
                          "IssueNumber":    arc['IssueNumber'],
                          "IssueYear":      arc['IssueYear']})
+
+                    # Not on the watchlist - before falling back to a provider search, check whether a
+                    # matching file already exists under an unimported series folder in the general
+                    # library (as opposed to the arc's own destination folder, checked just below).
+                    libmatch = self._findIssueInLibrary(arc['ComicName'], arc['DynamicComicName'], arc['IssueNumber'])
+                    if libmatch:
+                        logger.fdebug('[LIBRARY MATCH] Found %s #%s already in your library at %s - using it instead of searching.' % (arc['ComicName'], arc['IssueNumber'], libmatch['comiclocation']))
+                        location_path = os.path.join(libmatch['comiclocation'], libmatch['comicfilename'])
+                        if all([mylar.CONFIG.STORYARCDIR, mylar.CONFIG.COPY2ARCDIR, dstloc is not None]):
+                            dst = os.path.join(dstloc, libmatch['comicfilename'])
+                            try:
+                                if not os.path.isfile(dst):
+                                    # always copy here, never move - this file lives in an unmanaged part
+                                    # of the library that Mylar doesn't otherwise track, so leave it in place.
+                                    fileoperation = helpers.file_ops(location_path, dst, arc=True, multiple=True)
+                                    if not fileoperation:
+                                        raise OSError
+                                location_path = dst
+                            except (OSError, IOError):
+                                logger.warn('Failed to copy %s into the Story Arc directory - leaving it where it is.' % location_path)
+
+                        newVal = {"Status": "Downloaded", "Location": location_path}
+                        ctrlVal = {"IssueArcID": arc['IssueArcID']}
+                        myDB.upsert("storyarcs", newVal, ctrlVal)
+                        continue
 
                 if filelist is not None and mylar.CONFIG.STORYARCDIR:
                     logger.fdebug('[NO WATCHLIST MATCH] Checking against local Arc directory for given issue.')
