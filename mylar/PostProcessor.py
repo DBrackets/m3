@@ -3308,7 +3308,11 @@ class PostProcessor(object):
                                 checkspace = helpers.get_free_space(grdst)
                                 if checkspace is False:
                                     raise OSError
-                                fileoperation = helpers.file_ops(grab_src, grab_dst, arc=True)
+                                # this issue is being filed into every Story Arc it belongs to in this same loop -
+                                # if there's more than one, force a copy so an earlier iteration's move doesn't
+                                # remove the source file before a later arc gets its turn.
+                                shared_across_arcs = len(arcsforever) > 1
+                                fileoperation = helpers.file_ops(grab_src, grab_dst, arc=True, multiple=shared_across_arcs)
                                 if not fileoperation:
                                     raise OSError
                             except Exception as e:

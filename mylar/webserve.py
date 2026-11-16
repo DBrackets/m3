@@ -39,6 +39,7 @@ import traceback
 
 import time
 import random
+import hashlib
 import threading
 import csv
 import platform
@@ -5718,9 +5719,14 @@ class WebInterface(object):
 
 
                                     if not os.path.isfile(dstloc):
-                                        logger.fdebug('Copying %s to %s' % (issloc, dstloc))
+                                        logger.fdebug('%s %s to %s' % (mylar.CONFIG.ARC_FILEOPS.title(), issloc, dstloc))
                                         try:
-                                           fileoperation = helpers.file_ops(issloc, dstloc, arc=True)
+                                           # if this issue also belongs to other tracked Story Arcs, force a copy
+                                           # here regardless of the configured Arc File Operation, so we don't move
+                                           # the file out from under a sibling arc that also needs to pull it in.
+                                           other_arcs = myDB.select("SELECT DISTINCT StoryArcID FROM storyarcs WHERE ComicID=? AND IssueID=? AND Manual != 'deleted'", [m_arc['match_id'], issue['IssueID']])
+                                           shared_across_arcs = other_arcs is not None and len(other_arcs) > 1
+                                           fileoperation = helpers.file_ops(issloc, dstloc, arc=True, multiple=shared_across_arcs)
                                            if not fileoperation:
                                                raise OSError
                                         except (OSError, IOError):
@@ -9768,6 +9774,115 @@ class WebInterface(object):
             return json.dumps({'status': 'success', 'message': linemsg})
     fix_cv_removed.exposed = True
 
+    def addCBLIssuesAsStoryArc(self, storyarc_name, new_arc_books):
+        # Files a batch of CBL reading-list issues from series that aren't on the watchlist as an ad-hoc
+        # Story Arc, instead of permanently adding those series via the normal importer path. This reuses
+        # the exact same mechanism native Story Arcs use to grab crossover issues without watching the
+        # series they came from: a storyarcs row per issue, resolved/searched/downloaded entirely within
+        # that table (see addStoryArc/ArcWatchlist/ReadGetWanted).
+        #
+        # new_arc_books: list of dicts {'cvSeriesID', 'cvIssueID', 'readingorder'}, already sorted into the
+        # reading list's own order.
+        module = '[CBL IMPORT]'
+        myDB = db.DBConnection()
+
+        # Derive the StoryArcID deterministically from the list name so re-importing the same reading list
+        # updates the existing arc rather than creating a duplicate one every time.
+        storyarcid = 'CBL' + hashlib.md5(storyarc_name.encode('utf-8')).hexdigest()[:12]
+
+        arclist = '|'.join('%s,%s' % (b['cvIssueID'], b['readingorder']) for b in new_arc_books)
+        cidlist = ''
+        for b in new_arc_books:
+            if b['cvSeriesID'] not in cidlist.split('|'):
+                cidlist += ('|' if cidlist else '') + b['cvSeriesID']
+
+        arc_results = mylar.cv.getComic(comicid=None, rtype='issue', arcid=storyarcid, arclist=arclist)
+        if not arc_results or not arc_results.get('issuechoice'):
+            logger.warn('%s Unable to retrieve issue details from ComicVine for the new series in this reading list.' % module)
+            return False
+
+        comicid_results = mylar.cv.getComic(comicid=None, rtype='comicyears', comicidlist=cidlist)
+
+        issuedata = []
+        for arcval in arc_results['issuechoice']:
+            comicname = arcval['ComicName']
+            st_d = filechecker.FileChecker(watchcomic=comicname)
+            st_dyninfo = st_d.dynamic_replace(comicname)
+            dynamic_name = re.sub(r'[\|\s]', '', st_dyninfo['mod_seriesname'].lower()).strip()
+
+            issid = str(arcval['IssueID'])
+            comicid = str(arcval['ComicID'])
+            int_issnum = helpers.issue_number_parser(arcval['Issue_Number']).asInt
+
+            readingorder = 0
+            for b in new_arc_books:
+                if str(b['cvIssueID']) == issid:
+                    readingorder = b['readingorder']
+                    break
+
+            issuedata.append({"ComicID":         comicid,
+                               "IssueID":         issid,
+                               "IssueArcID":      str(storyarcid) + "_" + str(random.randint(1000,9999)),
+                               "ComicName":       comicname,
+                               "DynamicName":     dynamic_name,
+                               "IssueName":       arcval['Issue_Name'],
+                               "Issue_Number":    arcval['Issue_Number'],
+                               "IssueDate":       str(arcval['Issue_Date']),
+                               "ReleaseDate":     str(arcval['Store_Date']),
+                               "DigitalDate":     str(arcval['Digital_Date']),
+                               "ReadingOrder":    readingorder,
+                               "Int_IssueNumber": int_issnum})
+
+        for AD in issuedata:
+            seriesYear = 'None'
+            issuePublisher = 'None'
+            seriesVolume = 'None'
+            bookType = 'None'
+            seriesAliases = None
+            IssueName = 'None' if AD['IssueName'] is None else AD['IssueName'][:70]
+
+            for cid in comicid_results:
+                if cid['ComicID'] == AD['ComicID']:
+                    seriesYear = cid['SeriesYear']
+                    issuePublisher = cid['Publisher']
+                    seriesVolume = cid['Volume']
+                    bookType = cid['Type']
+                    seriesAliases = cid['Aliases']
+                    break
+
+            newCtrl = {"IssueID": AD['IssueID'], "StoryArcID": storyarcid}
+            newVals = {"ComicID":           AD['ComicID'],
+                       "IssueArcID":        AD['IssueArcID'],
+                       "StoryArc":          storyarc_name,
+                       "ComicName":         AD['ComicName'],
+                       "Volume":            seriesVolume,
+                       "DynamicComicName":  AD['DynamicName'],
+                       "IssueName":         IssueName,
+                       "IssueNumber":       AD['Issue_Number'],
+                       "Publisher":         issuePublisher,
+                       "TotalIssues":       len(issuedata),
+                       "ReadingOrder":      AD['ReadingOrder'],
+                       "IssueDate":         AD['IssueDate'],
+                       "ReleaseDate":       AD['ReleaseDate'],
+                       "DigitalDate":       AD['DigitalDate'],
+                       "SeriesYear":        seriesYear,
+                       "IssuePublisher":    issuePublisher,
+                       "CV_ArcID":          storyarcid,
+                       "Int_IssueNumber":   AD['Int_IssueNumber'],
+                       "Type":              bookType,
+                       "Aliases":           seriesAliases}
+
+            myDB.upsert("storyarcs", newVals, newCtrl)
+
+        logger.info('%s Filed %s crossover issue(s) from series not on your watchlist into Story Arc "%s"' % (module, len(issuedata), storyarc_name))
+
+        # Same path a native Story Arc uses post-add: match against the watchlist (a no-op for these, since
+        # none of them are watched by definition) and queue searches for everything still wanted.
+        self.ArcWatchlist(storyarcid)
+        self.ReadGetWanted(storyarcid)
+        return storyarcid
+    addCBLIssuesAsStoryArc.exposed = False
+
     def checkCBLFile(self, cblFile, ignorearchived=False, issuesonly=False):
         try:
             cblXML = ET.parse(cblFile.file)
@@ -9847,7 +9962,7 @@ class WebInterface(object):
                     iss_exists = False
                     iss_status = 'Missing'
                     missing_issue_count += 1
-                    action_text = 'Add volume & mark issue as Wanted'
+                    action_text = 'Not on watchlist - will be filed as a Story Arc issue (series will not be added)'
                 
                 # List to return to import table display: Entry, Volume, Issue, Status, Action
                 results.append([issueIndex, 
@@ -9916,29 +10031,28 @@ class WebInterface(object):
                 issueNumber = book.get('Number')
                 cvSeriesID = databaseEntry.get('Series')
                 cvIssueID = databaseEntry.get('Issue')
+                # preserves the reading list's own book order for issues that end up filed as a Story Arc
+                readingorder = books.index(book)
 
                 checkIssue = False
                 if cvSeriesID in volume_index.keys():
                     # If we've seen this volume before, and already marked it for adding
                     if volume_index[cvSeriesID]['NewVol']:
-                        logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" to be added, Issue #{issueNumber} to be marked as Wanted')
+                        logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" not on watchlist, Issue #{issueNumber} to be filed as a Story Arc issue')
                         counters['issues_to_be_watched'] += 1
-                        # If Auto Want is on and not suppressed, we can avoid queueing this for addition
-                        if (issuesonly and mylar.CONFIG.AUTOWANT_ALL) or not mylar.CONFIG.AUTOWANT_ALL:
-                            volume_index[cvSeriesID]['IssueIDs'].append(cvIssueID)
+                        # Series isn't being added to the watchlist at all (see below), so every requested
+                        # issue always needs to be tracked explicitly - there's no "auto want the rest of the
+                        # series" equivalent to suppress here.
+                        volume_index[cvSeriesID]['IssueIDs'].append({'cvSeriesID': cvSeriesID, 'cvIssueID': cvIssueID, 'readingorder': readingorder})
                     else:
                         checkIssue = True
                 else:
                     volume = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [cvSeriesID]).fetchone()
                     if volume is None:
-                        logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" does not exist exist.  Adding Volume, and Issue #{issueNumber} to be marked as Wanted')
-                        
-                        issueList = []
-                        # If Auto Want is on and not suppressed, we can avoid queueing this for addition
-                        if (issuesonly and mylar.CONFIG.AUTOWANT_ALL) or not mylar.CONFIG.AUTOWANT_ALL:
-                            issueList.append(cvIssueID)
-                        
-                        volume_index[cvSeriesID] = {'NewVol' : True, 'VolumeName' : volumeName, 'VolumeYear' : volumeYear, 'IssueIDs' : issueList}
+                        logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" is not on your watchlist. Issue #{issueNumber} will be filed as a Story Arc issue instead of adding the series.')
+
+                        volume_index[cvSeriesID] = {'NewVol' : True, 'VolumeName' : volumeName, 'VolumeYear' : volumeYear,
+                                                     'IssueIDs' : [{'cvSeriesID': cvSeriesID, 'cvIssueID': cvIssueID, 'readingorder': readingorder}]}
                         counters['volumes_added'] += 1
                         counters['issues_to_be_watched'] += 1
                     else:
@@ -9976,13 +10090,25 @@ class WebInterface(object):
 
             # No more holding back, let's get this stuff queued!
             logger.fdebug(f"Finished analysing CBL File, adding volumes and issues to MASS-ADD queues")
+            new_arc_books = []
             for comicId,data in volume_index.items():
                 if data['NewVol']:
-                    comic_request = [{"comicid": comicId, "comicname": data['VolumeName'], "seriesyear": data['VolumeYear'], 'suppress_addall' : (issuesonly and mylar.CONFIG.AUTOWANT_ALL)}]
-                    importer.importer_thread(comic_request)
+                    # Not on the watchlist - route these into an ad-hoc Story Arc instead of permanently
+                    # adding the series (same reasoning as native Story Arcs: grab just the listed issue(s)
+                    # without watching everything else that series publishes).
+                    new_arc_books.extend(data['IssueIDs'])
+                else:
+                    if len(data['IssueIDs']) > 0:
+                        importer.issue_watcher_thread(data['IssueIDs'])
 
-                if len(data['IssueIDs']) > 0:
-                    importer.issue_watcher_thread(data['IssueIDs'])
+            arc_name = None
+            if new_arc_books:
+                new_arc_books.sort(key=lambda b: b['readingorder'])
+                arc_name = f"CBL: {os.path.splitext(cblFile.filename)[0]}"
+                arc_id = self.addCBLIssuesAsStoryArc(arc_name, new_arc_books)
+                if not arc_id:
+                    arc_name = None
+                    warnings.add('Could not retrieve ComicVine details for the new series in this list - they were not added. Check logs for details.')
 
 
             # Give the MASS-ADD thread a little nudge in case it's not been started as we added no volumes
@@ -9998,12 +10124,16 @@ class WebInterface(object):
         mylar.CONFIG.writeconfig(values={'CBL_IMPORT_ISSUESONLY': mylar.CONFIG.CBL_IMPORT_ISSUESONLY, 'CBL_IMPORT_IGNOREARCHIVED': mylar.CONFIG.CBL_IMPORT_IGNOREARCHIVED})
 
         warning_text = '<br >'.join(warnings)
+        if arc_name:
+            arc_line = f'New Volumes filed as Story Arc "{arc_name}" (not added to watchlist): {counters["volumes_added"]} <br >'
+        else:
+            arc_line = f'New Volumes: {counters["volumes_added"]} <br >'
         return json.dumps({'status': 'success', 'message' : f'''CBL File "{cblFile.filename}" fully imported <br >
                            <br >
-                           Issues Already Watched: {counters['issues_skipped']} <br > 
+                           Issues Already Watched: {counters['issues_skipped']} <br >
                            Existing Volume Issues to Watch: {counters['issues_watched']} <br >
-                           New Volumes Queued to Add: {counters['volumes_added']} <br >
-                           New Volume Issues to Watch: {counters['issues_to_be_watched']} <br > ''', 
+                           {arc_line}
+                           New Volume Issues to Watch: {counters['issues_to_be_watched']} <br > ''',
                            'warning_text' : warning_text})
 
     processCBLFile.exposed = True

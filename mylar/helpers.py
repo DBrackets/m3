@@ -3976,7 +3976,7 @@ def file_ops(path,dst,arc=False,one_off=False,multiple=False):
     else:
         action_op = mylar.CONFIG.FILE_OPTS
 
-    if action_op == 'copy' or (arc is True and any([action_op == 'copy', action_op == 'move'])):
+    if action_op == 'copy':
         try:
             shutil.copy( path , dst )
 #        if crc_check == mylar.filechecker.crc(dst):
