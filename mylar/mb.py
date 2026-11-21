@@ -560,8 +560,11 @@ def storyarcinfo(xmlid):
 
     try:
         arcdom = parseString(r.content)
-    except ExpatError:
-        if '<title>Abnormal Traffic Detected' in r.content:
+    except ExpatError as e:
+        # r.content is bytes - decode before the substring check, or this 'in' comparison itself
+        # raises a TypeError and masks the real error (eg. when a non-ComicVine story-arc id, such
+        # as one of our own CBL-generated arc ids, gets a non-XML error response back from CV).
+        if '<title>Abnormal Traffic Detected' in r.content.decode('utf-8', errors='replace'):
             logger.error('ComicVine has banned this server\'s IP address because it exceeded the API rate limit.')
         else:
             logger.warn('While parsing data from ComicVine, got exception: %s for data: %s' % (e, r.content))
