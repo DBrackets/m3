@@ -149,9 +149,7 @@ class FileHandlers(object):
 
         #if comversion is None, remove it so it doesn't populate with 'None'
         if comicVol == 'None':
-            chunk_f_f = re.sub(r'\$VolumeN', '', chunk_folder_format)
-            chunk_f = re.compile(r'\s+')
-            chunk_folder_format = chunk_f.sub(' ', chunk_f_f)
+            chunk_folder_format = helpers.strip_format_token(chunk_folder_format, '$VolumeN')
 
         if any([imprint is None, imprint == 'None']):
             imprint = self.comic['PublisherImprint']
@@ -521,9 +519,7 @@ class FileHandlers(object):
 
             #if comversion is None, remove it so it doesn't populate with 'None'
             if comversion == 'None':
-                chunk_f_f = re.sub(r'\$VolumeN', '', chunk_file_format)
-                chunk_f = re.compile(r'\s+')
-                chunk_file_format = chunk_f.sub(' ', chunk_f_f)
+                chunk_file_format = helpers.strip_format_token(chunk_file_format, '$VolumeN')
                 logger.fdebug('No version # found for series, removing from filename')
                 logger.fdebug("new format: " + str(chunk_file_format))
 

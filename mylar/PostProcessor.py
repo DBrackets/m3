@@ -2865,9 +2865,7 @@ class PostProcessor(object):
                 comversion = 'None'
             #if comversion is None, remove it so it doesn't populate with 'None'
             if comversion == 'None':
-                chunk_f_f = re.sub(r'\$VolumeN', '', mylar.CONFIG.FILE_FORMAT)
-                chunk_f = re.compile(r'\s+')
-                chunk_file_format = chunk_f.sub(' ', chunk_f_f)
+                chunk_file_format = helpers.strip_format_token(mylar.CONFIG.FILE_FORMAT, '$VolumeN')
                 self._log("No version # found for series - tag will not be available for renaming.")
                 logger.fdebug('%s No version # found for series, removing from filename' % module)
                 logger.fdebug('%s New format is now: %s' % (module, chunk_file_format))

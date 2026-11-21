@@ -288,6 +288,20 @@ def decimal_issue(iss):
         deciss = (int(iss_b4dec) * 1000) + issdec
     return deciss, dec_except
 
+def strip_format_token(fmt, token):
+    # Remove a FILE_FORMAT/FOLDER_FORMAT token (eg. '$VolumeN') from a format string when its
+    # value is empty, along with any (), [], or {} group that encloses it - not just the bare
+    # token itself. Otherwise a literal label baked into the format string alongside the token
+    # (eg. the "Vol " in "(Vol $VolumeN)") is left dangling in the finished filename/foldername
+    # as something like "(Vol )" once the token resolves to nothing.
+    # Collapses whitespace left behind the same way every call site already did by hand.
+    tok = re.escape(token)
+    for ob, cb in (('(', ')'), ('[', ']'), ('{', '}')):
+        o, c = re.escape(ob), re.escape(cb)
+        fmt = re.sub(o + '[^' + o + c + ']*' + tok + '[^' + o + c + ']*' + c, '', fmt)
+    fmt = re.sub(tok, '', fmt)
+    return re.sub(r'\s+', ' ', fmt)
+
 def rename_param(comicid, comicname, issue, ofilename, comicyear=None, issueid=None, annualize=None, arc=False):
             #import db
             myDB = db.DBConnection()
@@ -436,9 +450,7 @@ def rename_param(comicid, comicname, issue, ofilename, comicyear=None, issueid=N
                 comversion = 'None'
             #if comversion is None, remove it so it doesn't populate with 'None'
             if comversion == 'None':
-                chunk_f_f = re.sub(r'\$VolumeN', '', mylar.CONFIG.FILE_FORMAT)
-                chunk_f = re.compile(r'\s+')
-                chunk_file_format = chunk_f.sub(' ', chunk_f_f)
+                chunk_file_format = strip_format_token(mylar.CONFIG.FILE_FORMAT, '$VolumeN')
                 logger.fdebug('No version # found for series, removing from filename')
                 logger.fdebug("new format: " + str(chunk_file_format))
             else:
@@ -723,9 +735,7 @@ def updateComicLocation():
                     comversion = 'None'
                 #if comversion is None, remove it so it doesn't populate with 'None'
                 if comversion == 'None':
-                    chunk_f_f = re.sub(r'\$VolumeN', '', chunk_folder_format)
-                    chunk_f = re.compile(r'\s+')
-                    chunk_folder = chunk_f.sub(' ', chunk_f_f)
+                    chunk_folder = strip_format_token(chunk_folder_format, '$VolumeN')
                 else:
                     chunk_folder = chunk_folder_format
 
