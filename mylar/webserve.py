@@ -4244,6 +4244,55 @@ class WebInterface(object):
         return json.dumps({'status': 'success'})
     manualRename.exposed = True
 
+    def manualRenameArc(self, StoryArcID):
+        if mylar.CONFIG.FILE_FORMAT == '':
+            logger.error("You haven't specified a File Format in Configuration/Advanced")
+            logger.error("Cannot rename files.")
+            return json.dumps({'status': 'failure'})
+
+        myDB = db.DBConnection()
+        arcissues = myDB.select("SELECT * FROM storyarcs WHERE StoryArcID=? AND Status='Downloaded' AND Location is not NULL", [StoryArcID])
+        if not arcissues:
+            logger.warn('[RENAMER] No downloaded issues found for this Story Arc - nothing to rename.')
+            return json.dumps({'status': 'failure'})
+
+        filefind = 0
+        arcname = None
+        for arciss in arcissues:
+            arcname = arciss['StoryArc']
+            srciss = arciss['Location']
+            if not os.path.isfile(srciss):
+                logger.warn('[RENAMER] Cannot locate file on disk - skipping: %s' % srciss)
+                continue
+
+            filename = os.path.basename(srciss)
+            if 'annual' in filename.lower():
+                annualize = 'yes'
+            else:
+                annualize = None
+
+            renameiss = helpers.rename_param(arciss['ComicID'], arciss['ComicName'], arciss['IssueNumber'], filename, issueid=arciss['IssueID'], annualize=annualize, arc=arcname)
+            if renameiss is None:
+                logger.warn('[RENAMER] Unable to determine new filename for %s - skipping.' % srciss)
+                continue
+
+            nfilename = renameiss['nfilename']
+            if filename != nfilename:
+                logger.info('Renaming ' + filename + ' ... to ... ' + nfilename)
+                try:
+                    shutil.move(srciss, renameiss['destination_dir'])
+                except (OSError, IOError):
+                    logger.error('Failed to move files - check directories and manually re-run.')
+                    return json.dumps({'status': 'failure'})
+                myDB.upsert('storyarcs', {'Location': renameiss['destination_dir']}, {'IssueArcID': arciss['IssueArcID']})
+                filefind += 1
+            else:
+                logger.info('Not renaming ' + filename + ' as it is in desired format already.')
+
+        logger.info('[RENAMER] I have renamed %s issue(s) for %s' % (filefind, arcname))
+        return json.dumps({'status': 'success'})
+    manualRenameArc.exposed = True
+
     def searchScan(self, name):
         return serve_template(templatename="searchfix.html", title="Manage", name=name)
     searchScan.exposed = True

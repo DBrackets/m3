@@ -386,7 +386,7 @@ def rename_param(comicid, comicname, issue, ofilename, comicyear=None, issueid=N
                     storyarcd = os.path.join(mylar.CONFIG.DESTINATION_DIR, mylar.CONFIG.GRABBAG_DIR)
 
                 comlocation = storyarcd
-                comversion = None   #need to populate this.
+                comversion = issuenzb['Volume']   #populated from the storyarcs table (set at arc-add time from ComicVine's series volume, independent of watchlist status)
 
             else:
                 issuenum = issuenzb['Issue_Number']
