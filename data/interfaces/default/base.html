@@ -11,8 +11,8 @@
 	<meta charset="UTF-8" />
 	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
 	
-	<title>Mylar ${f'- {mylar.CONFIG.INSTANCE_NAME} ' if mylar.CONFIG.INSTANCE_NAME else ''}- ${title}</title>
-	<meta name="description" content="Mylar 'default' interface - made by Elmar Kouwenhoven" />
+	<title>${f'{mylar.CONFIG.INSTANCE_NAME} - ' if mylar.CONFIG.INSTANCE_NAME else ''}${title}</title>
+	<meta name="description" content="'default' interface - made by Elmar Kouwenhoven" />
 	<meta name="author" content="Elmar Kouwenhoven" />
 	
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -534,7 +534,7 @@
                     var series_line = document.getElementById("series_line");
                     series_line.innerHTML = '<a href="'+series_c_url+'" target="_blank">'+series_c_name+' ('+series_c_year+')</a>';
                     console.log(series_line.innerHTML);
-                    document.title = 'Mylar - '+series_c_name;
+                    document.title = series_c_name;
                 }
             }
         }
